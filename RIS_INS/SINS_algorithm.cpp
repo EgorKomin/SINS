@@ -205,7 +205,7 @@ orientationangles SINS_algorithm::getangles(double q0, double q1, double q2, dou
 	angles.roll = -atan(2 * (q1 * q3 - q0 * q2) / (pow(q0, 2) - pow(q1, 2) - pow(q2, 2) + pow(q3, 2)));
 	angles.heading = atan2(2 * (q1 * q2 - q0 * q3), (pow(q0, 2) - pow(q1, 2) + pow(q2, 2) - pow(q3, 2)));
 	if (angles.heading < 0)
-		angles.heading = angles.heading + 2 * pi;
+		angles.heading = angles.heading + 2 * PI;
 
 	return angles;
 }

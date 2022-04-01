@@ -3,6 +3,8 @@
 #include<vector>
 #include<iostream>
 
+#define PI 3.1416
+
 enum typeOfCorrection
 {
 	WITHOUTCORR = 0,
@@ -55,7 +57,6 @@ struct conststr
 	double f, T, R, u, g, a, b, e;
 };
 
-extern const double pi;
 
 class consts
 {
@@ -63,18 +64,18 @@ public:
 	
 	static double deg2rad(double angle)
 	{
-		return angle * pi / 180;
+		return angle * PI / 180;
 	}
 
 	static double degPerHours2radPerSeconds(double angularVelocity)
 	{
-		return angularVelocity * pi / 180 / 3600;
+		return angularVelocity * PI / 180 / 3600;
 	}
 
 
 	static double rad2deg(double angle)
 	{
-		return angle * 180 / pi;
+		return angle * 180 / PI;
 	}
 
 	static conststr getconsts()

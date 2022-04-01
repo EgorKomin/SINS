@@ -27,7 +27,7 @@ void Alignment::startAlignment(double *q0, double *q1, double *q2, double *q3)
 
 	if (heading < 0)
 	{
-		heading = heading + 2.0 * pi;
+		heading = heading + 2.0 * PI;
 	}
 	//test
 	/*double q0_test, q1_test, q2_test, q3_test;

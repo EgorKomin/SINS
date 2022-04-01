@@ -10,7 +10,6 @@
 #define DEBUG
 
 
-const double pi = 3.1416;
 
 void inputError(databody &deltaa, databody &deltaomega)
 {
