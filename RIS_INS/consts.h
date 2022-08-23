@@ -2,6 +2,10 @@
 #include<cmath>
 #include<vector>
 #include<iostream>
+#include <boost/numeric/ublas/matrix.hpp>
+#include <boost/numeric/ublas/vector.hpp>
+
+using namespace boost::numeric::ublas;
 
 #define PI 3.1416
 
@@ -23,10 +27,10 @@ struct orientationangles
 {
 	double pitch, roll, heading;
 };
-struct matrix
-{
-	double c00, c01, c02, c10, c11, c12, c20, c21, c22;
-};
+//struct matrix
+//{
+	//double c00, c01, c02, c10, c11, c12, c20, c21, c22;
+//};
 
 
 struct databody
@@ -39,16 +43,20 @@ struct dataenup
 	double E, N, Up;
 };
 
+struct Quat
+{
+	double q0, q1, q2, q3;
+};
+
 struct SINS_SOLUTION
 {
 	orientationangles angles;
 	double Ve, Vn, Vup;
 	double E, N, Up, fi, lmd;
 	dataenup omega;
-	matrix C;
+	matrix<double> C;
 };
 
-typedef std::vector<SINS_SOLUTION> SOLUTIONvector;
 typedef std::vector<databody> datavector;
 typedef std::vector<double> doublevector;
 
@@ -93,14 +101,14 @@ public:
 	}
 
 	//функция нормировки кватерниона
-	static void norm(double* q0, double* q1, double* q2, double* q3)
+	static void norm(Quat *quat)
 	{
 		double n;
-		n = sqrt(pow(*q0, 2) + pow(*q1, 2) + pow(*q2, 2) + pow(*q3, 2));
-		*q0 = *q0 / n;
-		*q1 = *q1 / n;
-		*q2 = *q2 / n;
-		*q3 = *q3 / n;
+		n = sqrt(pow(quat->q0, 2) + pow(quat->q1, 2) + pow(quat->q2, 2) + pow(quat->q3, 2));
+		quat->q0 = quat->q0 / n;
+		quat->q1 = quat->q1 / n;
+		quat->q2 = quat->q2 / n;
+		quat->q3 = quat->q3 / n;
 
 	}
 

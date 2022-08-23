@@ -1,43 +1,27 @@
 #include "SINS_algorithm.h"
 
 //конструктор класса
-SINS_algorithm::SINS_algorithm(double q0, double q1, double q2, double q3, typeOfCorrection typeCorr, double tcorr, double Ts, bool apply_second_platform)
+SINS_algorithm::SINS_algorithm(Quat quat_init, typeOfCorrection typeCorr, double tcorr, double Ts, bool layout_base_platform)
 {
-	this->q0 = q0;
-	this->q1 = q1;
-	this->q2 = q2;
-	this->q3 = q3;
+	this->quat_init = quat_init;
 
 	model_base_calculate = new CalculateNavParamsWithoutCorr();
+	model_base_calculate->setQuat(quat_init);
 	model_corr_calculate = nullptr;
-	model_calculate = nullptr;
 	
-	SOLinit.angles = { 0 };
-	SOLinit.C = { 0 };
-
-	SOLinit.Ve = 0;
-	SOLinit.Vn = 0;
-	SOLinit.Vup = 0;
-
-	SOLinit.omega = { 0 };
-
-	SOLinit.fi = 0;
-	SOLinit.lmd = 0;
-
-	SOLinit.E = 0;
-	SOLinit.N = 0;
-	SOLinit.Up = 0;
 	
-	this->apply_second_platform = apply_second_platform;
+	this->layout_base_platform = layout_base_platform;
 	this->tcorr = tcorr;
 	this->Ts = Ts;
+	layout_second = false;
 
+	initEcoord = 0;
+	initNcoord = 0;
 
 	switch (typeCorr)
 	{
 	case WITHOUTCORR:
 	{
-		model_corr_calculate = model_base_calculate;
 		break;
 	}
 	case SPEEDCORR:
@@ -54,110 +38,50 @@ SINS_algorithm::SINS_algorithm(double q0, double q1, double q2, double q3, typeO
 		break;
 	}
 	
-	
 }
 
 
-SOLUTIONvector SINS_algorithm::start(const datavector &acc, const datavector  &gyro, const doublevector &dataCorr_E_lmd, const doublevector &dataCorr_N_fi)
+void SINS_algorithm::navigationPass(const databody acc, const databody gyro, const double dataCorr_E_lmd, const double dataCorr_N_fi)
 {
-	
-	
-	double q0 = this->q0;
-	double q1 = this->q1;
-	double q2 = this->q2;
-	double q3 = this->q3;
-
-	double q0_second;
-	double q1_second;
-	double q2_second;
-	double q3_second;
 	
 	auto str = consts::getconsts();
-	auto dt = 1 / str.f;
+	double dt = 1 / str.f;
 	
-	double  Rfi, Rlmd;
 
-	SOLUTIONvector SOLVEC, SOLVEC_second, SOLVEC_layout;
-	SOLVEC.push_back(SOLinit);
-	SOLVEC_layout.push_back(SOLinit);
+	static bool switched = false;
 
-	SINS_SOLUTION SOL, SOL_second;
-
-	CalculateRadius(&Rfi, &Rlmd, SOLinit.fi);
-
-	SOLinit.E = SOLinit.lmd * Rlmd * cos(SOLinit.fi);
-	SOLinit.N = SOLinit.fi * Rfi;
-
-	bool switched = false;
-	int iter_second = 0;
+	static int step = 0;
 
 	// НАВИГАЦИОННЫЙ АЛГОРИТМ
-	for (size_t i = 1; i < acc.size(); ++i)
+
+	// ВЫЧИСЛЕНИЯ ПО БАЗОВОЙ ПЛАТФОРМЕ
+	Navigation(model_base_calculate, acc, gyro, NULL, NULL);
+
+	// ПЕРЕКЛЮЧЕНИЕ НА КОРРЕКЦИЮ
+	if ((step * dt > tcorr) && (model_corr_calculate != nullptr))
 	{
 
-		// ПЕРЕКЛЮЧЕНИЕ НА КОРРЕКЦИЮ (ВЫБОР ПЛАТФОРМЫ)
-		if (i * dt > tcorr)
+		if (!switched)
 		{
-			model_calculate = model_corr_calculate;
-		}
-		else
-		{
-			model_calculate = model_base_calculate;	
+			// начинаем вычисления по новой платформе с последних вычислений по старой платформе
+			switched = true;
+			model_corr_calculate->setQuat(model_base_calculate->getQuat());
+			model_corr_calculate->setSolution(model_base_calculate->getSolution());
 		}
 
-		
-		// ВЫЧИСЛЕНИЯ ПО ВЫБРАННОЙ ПЛАТФОРМЕ
-		SOL = Navigation(model_calculate, acc[i], gyro[i], SOLVEC[i - 1], &q0, &q1, &q2, &q3, dataCorr_E_lmd[i], dataCorr_N_fi[i]);
-		SOLVEC.push_back(SOL);
 
+		// ВЫЧИСЛЕНИЯ ПО НОВОЙ ПЛАТФОРМЕ
+		Navigation(model_corr_calculate, acc, gyro, dataCorr_E_lmd, dataCorr_N_fi);
+		layout_second = true;
 
-		// ЗАПУСК РАСЧЕТА ПО ВТОРОЙ ПЛАТФОРМЕ (В ДАННОМ СЛУЧАЕ ВО ВРЕМЯ ПЕРЕХОДНОГО ПРОЦЕССА)
-		if ((apply_second_platform) && (i * dt >= tcorr) && (i * dt <= tcorr + 4 * Ts))
-		{
-			iter_second++;
-			if (!switched)
-			{
-				switched = true;
-				q0_second = q0;
-				q1_second = q1;
-				q2_second = q2;
-				q3_second = q3;
-				SOLVEC_second.push_back(SOL);
-			}
-
-			// ВЫЧИСЛЕНИЯ ПО БАЗОВОЙ ПЛАТФОРМЕ
-			SOL_second = Navigation(model_base_calculate, acc[i], gyro[i], SOLVEC_second[iter_second - 1], &q0_second, &q1_second, &q2_second, &q3_second, NULL, NULL);
-			SOLVEC_second.push_back(SOL_second);
-
-			SOLVEC_layout.push_back(SOL_second);
-		}
-		else
-		{
-			SOLVEC_layout.push_back(SOL);
-		}
 	}
 
+	// во время переходного процесса продолжаем выводить показания базовой платформы
+	if ((layout_base_platform) && (step * dt < tcorr + 4 * Ts))
+	{
+		layout_second = false;
+	}
 
-	return SOLVEC_layout;
-}
-
-//функция обновления кватерниона
-void SINS_algorithm::multiply(double *q0, double *q1, double *q2, double *q3, double matrix[4][4], double a, double b, double c, double d)
-{
-	*q0 = matrix[0][0] * a + matrix[0][1] * b + matrix[0][2] * c + matrix[0][3] * d;
-	*q1 = matrix[1][0] * a + matrix[1][1] * b + matrix[1][2] * c + matrix[1][3] * d;
-	*q2 = matrix[2][0] * a + matrix[2][1] * b + matrix[2][2] * c + matrix[2][3] * d;
-	*q3 = matrix[3][0] * a + matrix[3][1] * b + matrix[3][2] * c + matrix[3][3] * d;
-}
-
-//функция пересчета ускорений в ENUp
-dataenup SINS_algorithm::multiply(matrix matr, databody acc_body_takt)
-{
-	dataenup acc_takt;
-	acc_takt.E = matr.c00 * acc_body_takt.X + matr.c01 * acc_body_takt.Y + matr.c02 * acc_body_takt.Z;
-	acc_takt.N = matr.c10 * acc_body_takt.X + matr.c11 * acc_body_takt.Y + matr.c12 * acc_body_takt.Z;
-	acc_takt.Up = matr.c20 * acc_body_takt.X + matr.c21 * acc_body_takt.Y + matr.c22 * acc_body_takt.Z;
-	return acc_takt;
 }
 
 //функция установки начальных условий
@@ -165,8 +89,9 @@ void SINS_algorithm::setInit(double Ve, double Vn, double Vup, double fi, double
 {
 	auto str = consts::getconsts();
 
-	SOLinit.angles = getangles(q0, q1, q2, q3);
-	SOLinit.C = getmatrix(q0, q1, q2, q3);
+	SINS_SOLUTION SOLinit;
+	SOLinit.angles = getangles(quat_init);
+	SOLinit.C = getmatrix(quat_init);
 
 	SOLinit.Ve = Ve;
 	SOLinit.Vn = Vn;
@@ -174,32 +99,98 @@ void SINS_algorithm::setInit(double Ve, double Vn, double Vup, double fi, double
 
 	SOLinit.fi = fi;
 	SOLinit.lmd = lmd;
+	SOLinit.E = 0;
+	SOLinit.N = 0;
 	SOLinit.Up = Up;
 
 	SOLinit.omega = model_base_calculate->getAngularVelocity(Ve, Vn, str.R, str.R, fi, lmd, NULL, NULL);
+
+	double  Rfi, Rlmd;
+	CalculateRadius(&Rfi, &Rlmd, SOLinit.fi);
+
+	initEcoord = SOLinit.lmd * Rlmd * cos(SOLinit.fi);
+	initNcoord = SOLinit.fi * Rfi;
+
+	model_base_calculate->setSolution(SOLinit);
+}
+
+SINS_SOLUTION SINS_algorithm::getSolution()
+{
+	// ВЫВОД
+	if (layout_second)
+	{
+		return model_corr_calculate->getSolution();
+	}
+	else
+	{
+		return model_base_calculate->getSolution();
+	}
+}
+
+//функция обновления кватерниона
+void SINS_algorithm::UpdateQuat(Quat* quat, matrix<double> matr, double a, double b, double c, double d)
+{
+	vector<double> col(4);
+	col(0) = a;
+	col(1) = b;
+	col(2) = c;
+	col(3) = d;
+
+	vector<double> result = prod(matr, col);
+	quat->q0 = result(0);
+	quat->q1 = result(1);
+	quat->q2 = result(2);
+	quat->q3 = result(3);
+}
+
+//функция пересчета ускорений в ENUp
+dataenup SINS_algorithm::acc2ENUp(matrix<double> matr, databody acc_body_takt)
+{
+	vector<double> acc_body(3); 
+	acc_body(0) = acc_body_takt.X;
+	acc_body(1) = acc_body_takt.Y;
+	acc_body(2) = acc_body_takt.Z;
+
+	vector<double> acc = prod(matr, acc_body);
+
+	dataenup acc_takt;
+	acc_takt.E = acc(0);
+	acc_takt.N = acc(1);
+	acc_takt.Up = acc(2);
+	return acc_takt;
 }
 
 //функция получения матрицы направляющих косинусов
-matrix SINS_algorithm::getmatrix(double q0, double q1, double q2, double q3)
+matrix<double> SINS_algorithm::getmatrix(Quat quat)
 {
-	matrix MNK;
-	MNK.c00 = pow(q0, 2) + pow(q1, 2) - pow(q2, 2) - pow(q3, 2);
-	MNK.c01 = 2 * (q1 * q2 - q0 * q3);
-	MNK.c02 = 2 * (q1 * q3 + q0 * q2);
-	MNK.c10 = 2 * (q1 * q2 + q0 * q3);
-	MNK.c11 = pow(q0, 2) - pow(q1, 2) + pow(q2, 2) - pow(q3, 2);
-	MNK.c12 = 2 * (q2 * q3 - q0 * q1);
-	MNK.c20 = 2 * (q1 * q3 - q0 * q2);
-	MNK.c21 = 2 * (q2 * q3 + q0 * q1);
-	MNK.c22 = pow(q0, 2) - pow(q1, 2) - pow(q2, 2) + pow(q3, 2);
+	double q0 = quat.q0;
+	double q1 = quat.q1;
+	double q2 = quat.q2;
+	double q3 = quat.q3;
+
+	matrix<double> MNK(3,3);
+	MNK(0, 0) = pow(q0, 2) + pow(q1, 2) - pow(q2, 2) - pow(q3, 2);
+	MNK(0, 1) = 2 * (q1 * q2 - q0 * q3);
+	MNK(0, 2) = 2 * (q1 * q3 + q0 * q2);
+	MNK(1, 0) = 2 * (q1 * q2 + q0 * q3);
+	MNK(1, 1) = pow(q0, 2) - pow(q1, 2) + pow(q2, 2) - pow(q3, 2);
+	MNK(1, 2) = 2 * (q2 * q3 - q0 * q1);
+	MNK(2, 0) = 2 * (q1 * q3 - q0 * q2);
+	MNK(2, 1) = 2 * (q2 * q3 + q0 * q1);
+	MNK(2, 2) = pow(q0, 2) - pow(q1, 2) - pow(q2, 2) + pow(q3, 2);
 
 	return MNK;
 }
 
 //функция получения углов ориентации
-orientationangles SINS_algorithm::getangles(double q0, double q1, double q2, double q3)
+orientationangles SINS_algorithm::getangles(Quat quat)
 {
 	orientationangles angles;
+	
+	double q0 = quat.q0;
+	double q1 = quat.q1;
+	double q2 = quat.q2;
+	double q3 = quat.q3;
 
 	angles.pitch = atan(2 * (q2 * q3 + q0 * q1) / sqrt(4 * pow((q1 * q3 - q0 * q2), 2) + pow((pow(q0, 2) - pow(q1, 2) - pow(q2, 2) + pow(q3, 2)), 2)));
 	angles.roll = -atan(2 * (q1 * q3 - q0 * q2) / (pow(q0, 2) - pow(q1, 2) - pow(q2, 2) + pow(q3, 2)));
@@ -218,7 +209,7 @@ void SINS_algorithm::CalculateRadius(double *Rfi, double *Rlmd, double fi_prev)
 	*Rlmd = str.R / pow(1 - pow(str.e, 2) * pow(sin(fi_prev), 2), (1 / 2));
 }
 
-void SINS_algorithm::CalculateQuat1(databody gyro_takt, double* q0, double* q1, double* q2, double* q3)
+void SINS_algorithm::CalculateQuat1(databody gyro_takt, Quat* quat)
 {
 	auto str = consts::getconsts();
 	double dt = 1 / str.f;
@@ -231,7 +222,7 @@ void SINS_algorithm::CalculateQuat1(databody gyro_takt, double* q0, double* q1, 
 
 	double deltaF = sqrt(pow(Fx, 2) + pow(Fy, 2) + pow(Fz, 2));
 
-	double A[4][4];
+	matrix<double> A(4, 4);
 
 	// ВЫЧИСЛЕНИЕ КВАТЕРНИОНА - 1
 	if (deltaF != 0)
@@ -241,34 +232,34 @@ void SINS_algorithm::CalculateQuat1(databody gyro_takt, double* q0, double* q1, 
 		double deltalmd1 = Fx / deltaF * sin(deltaF / 2);
 		double deltalmd2 = Fy / deltaF * sin(deltaF / 2);
 		double deltalmd3 = Fz / deltaF * sin(deltaF / 2);
-		A[0][0] = deltalmd0;
-		A[0][1] = -deltalmd1;
-		A[0][2] = -deltalmd2;
-		A[0][3] = -deltalmd3;
-		A[1][0] = deltalmd1;
-		A[1][1] = deltalmd0;
-		A[1][2] = deltalmd3;
-		A[1][3] = -deltalmd2;
-		A[2][0] = deltalmd2;
-		A[2][1] = -deltalmd3;
-		A[2][2] = deltalmd0;
-		A[2][3] = deltalmd1;
-		A[3][0] = deltalmd3;
-		A[3][1] = deltalmd2;
-		A[3][2] = -deltalmd1;
-		A[3][3] = deltalmd0;
+		A(0, 0) = deltalmd0;
+		A(0, 1) = -deltalmd1;
+		A(0, 2) = -deltalmd2;
+		A(0, 3) = -deltalmd3;
+		A(1, 0) = deltalmd1;
+		A(1, 1) = deltalmd0;
+		A(1, 2) = deltalmd3;
+		A(1, 3) = -deltalmd2;
+		A(2, 0) = deltalmd2;
+		A(2, 1) = -deltalmd3;
+		A(2, 2) = deltalmd0;
+		A(2, 3) = deltalmd1;
+		A(3, 0) = deltalmd3;
+		A(3, 1) = deltalmd2;
+		A(3, 2) = -deltalmd1;
+		A(3, 3) = deltalmd0;
 
 
 
-		multiply(q0, q1, q2, q3, A, *q0, *q1, *q2, *q3);
+		UpdateQuat(quat, A, quat->q0, quat->q1, quat->q2, quat->q3);
 
 		// НОРМИРОВКА КВАТЕРНИОНА
-		consts::norm(q0, q1, q2, q3);
+		consts::norm(quat);
 	}
 
 }
 
-void SINS_algorithm::CalculateQuat2(dataenup omega_takt, double* q0, double* q1, double* q2, double* q3)
+void SINS_algorithm::CalculateQuat2(dataenup omega_takt, Quat* quat)
 {
 	auto str = consts::getconsts();
 	double dt = 1 / str.f;
@@ -280,7 +271,7 @@ void SINS_algorithm::CalculateQuat2(dataenup omega_takt, double* q0, double* q1,
 
 	double omegan = sqrt(pow(omegaxn, 2) + pow(omegayn, 2) + pow(omegazn, 2));
 
-	double  D[4][4];
+	matrix<double> D(4, 4);
 	// ВЫЧИСЛЕНИЕ КВАТЕРНИОНА - 2 КОРРЕКЦИИ
 	if (omegan != 0)
 	{
@@ -290,79 +281,86 @@ void SINS_algorithm::CalculateQuat2(dataenup omega_takt, double* q0, double* q1,
 		double deltam2 = -omegayn / omegan * sin(omegan * dt / 2);
 		double deltam3 = -omegazn / omegan * sin(omegan * dt / 2);
 
-		D[0][0] = *q0;
-		D[0][1] = -*q1;
-		D[0][2] = -*q2;
-		D[0][3] = -*q3;
-		D[1][0] = *q1;
-		D[1][1] = *q0;
-		D[1][2] = *q3;
-		D[1][3] = -*q2;
-		D[2][0] = *q2;
-		D[2][1] = -*q3;
-		D[2][2] = *q0;
-		D[2][3] = *q1;
-		D[3][0] = *q3;
-		D[3][1] = *q2;
-		D[3][2] = -*q1;
-		D[3][3] = *q0;
+		D(0, 0) = quat->q0;
+		D(0, 1) = -quat->q1;
+		D(0, 2) = -quat->q2;
+		D(0, 3) = -quat->q3;
+		D(1, 0) = quat->q1;
+		D(1, 1) = quat->q0;
+		D(1, 2) = quat->q3;
+		D(1, 3) = -quat->q2;
+		D(2, 0) = quat->q2;
+		D(2, 1) = -quat->q3;
+		D(2, 2) = quat->q0;
+		D(2, 3) = quat->q1;
+		D(3, 0) = quat->q3;
+		D(3, 1) = quat->q2;
+		D(3, 2) = -quat->q1;
+		D(3, 3) = quat->q0;
 
 
-		multiply(q0, q1, q2, q3, D, deltam0, deltam1, deltam2, deltam3);
+		UpdateQuat(quat, D, deltam0, deltam1, deltam2, deltam3);
 
 		// НОРМИРОВКА КВАТЕРНИОНА
-		consts::norm(q0, q1, q2, q3);
+		consts::norm(quat);
 	}
 	
 }
 
-SINS_SOLUTION SINS_algorithm::Navigation(CalculateNavParams* model_calculate, databody acc, databody gyro, SINS_SOLUTION SOL_prev, double *q0, double* q1, double* q2, double* q3, double dataCorr_E_lmd, double dataCorr_N_fi)
+void SINS_algorithm::Navigation(CalculateNavParams* model_calculate, databody acc, databody gyro, double dataCorr_E_lmd, double dataCorr_N_fi)
 {
 	double  Rfi, Rlmd;
-	dataenup omega_takt, acc_takt, velocity_prev, velocity_takt;
-	SINS_SOLUTION SOL, coord;
+	dataenup acc_takt, velocity_prev, velocity_takt;
+	SINS_SOLUTION coord;
+
+	// получаем текущий кватернион и нав решение
+	Quat quat = model_calculate->getQuat();
+	SINS_SOLUTION SOL = model_calculate->getSolution();
 
 	// ВЫЧИСЛЕНИЕ КВАТЕРНИОНА - 1
-	CalculateQuat1(gyro, q0, q1, q2, q3);
+	CalculateQuat1(gyro, &quat);
 
 	// ВЫЧИСЛЕНИЕ РАДИУСОВ ГЛАВНЫХ НОРМАЛЬНЫХ СЕЧЕНИЙ
-	CalculateRadius(&Rfi, &Rlmd, SOL_prev.fi);
+	CalculateRadius(&Rfi, &Rlmd, SOL.fi);
 
 	// ВЫЧИСЛЕНИЕ СКОРОСТЕЙ ENUp
-	omega_takt = model_calculate->getAngularVelocity(SOL_prev.Ve, SOL_prev.Vn, Rfi, Rlmd, SOL_prev.fi, SOL_prev.lmd, dataCorr_E_lmd, dataCorr_N_fi);
-	SOL.omega = omega_takt;
+	SOL.omega = model_calculate->getAngularVelocity(SOL.Ve, SOL.Vn, Rfi, Rlmd, SOL.fi, SOL.lmd, dataCorr_E_lmd, dataCorr_N_fi);
 
 	// ВЫЧИСЛЕНИЕ КВАТЕРНИОНА - 2 КОРРЕКЦИИ
-	CalculateQuat2(omega_takt, q0, q1, q2, q3);
+	CalculateQuat2(SOL.omega, &quat);
+
+	// пушим обновленный кватернион
+	model_calculate->setQuat(quat);
 
 	// ВЫЧИСЛЕНИЕ МАТРИЦЫ ОРИЕНТАЦИИ
-	SOL.C = getmatrix(*q0, *q1, *q2, *q3);
+	SOL.C = getmatrix(quat);
 
 	// ПЕРЕСЧЕТ УСКОРЕНИЙ В ENUP
-	acc_takt = multiply(SOL.C, acc);
+	acc_takt = acc2ENUp(SOL.C, acc);
 
 	// ВЫЧИСЛЕНИЕ УГЛОВ ОРИЕНТАЦИИ
-	SOL.angles = getangles(*q0, *q1, *q2, *q3);
+	SOL.angles = getangles(quat);
 
 	// ВЫЧИСЛЕНИЕ СКОРОСТЕЙ
-	velocity_prev.E = SOL_prev.Ve;
-	velocity_prev.N = SOL_prev.Vn;
-	velocity_prev.Up = SOL_prev.Vup;
+	velocity_prev.E = SOL.Ve;
+	velocity_prev.N = SOL.Vn;
+	velocity_prev.Up = SOL.Vup;
 
-	velocity_takt = model_calculate->getLinearVelocity(omega_takt, acc_takt, velocity_prev, SOL_prev.fi, SOL_prev.lmd);
+	velocity_takt = model_calculate->getLinearVelocity(SOL.omega, acc_takt, velocity_prev, SOL.fi, SOL.lmd);
 	SOL.Ve = velocity_takt.E;
 	SOL.Vn = velocity_takt.N;
 	SOL.Vup = velocity_takt.Up;
 
 	// ВЫЧИСЛЕНИЕ КООРДИНАТ
-	coord = model_calculate->getCoord(SOL_prev.Up, SOL_prev.fi, SOL_prev.lmd, Rfi, Rlmd, velocity_takt);
+	coord = model_calculate->getCoord(SOL.Up, SOL.fi, SOL.lmd, Rfi, Rlmd, velocity_takt);
 	SOL.Up = coord.Up;
 	SOL.fi = coord.fi;
 	SOL.lmd = coord.lmd;
 
-	SOL.E = SOL.lmd * Rlmd * cos(SOL.fi) - SOLinit.E;
-	SOL.N = SOL.fi * Rfi - SOLinit.N;
+	SOL.E = SOL.lmd * Rlmd * cos(SOL.fi) - initEcoord;
+	SOL.N = SOL.fi * Rfi - initNcoord;
 
-	return SOL;
+	// пушим обновленное решение
+	model_calculate->setSolution(SOL);
 }
 

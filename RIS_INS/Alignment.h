@@ -4,7 +4,7 @@
 
 class Alignment
 {
-	matrix C;
+	matrix<double> C;
 	orientationangles orientation;
 	databody avg_acc, avg_gyro;
 	double fi;
@@ -16,11 +16,11 @@ class Alignment
 public:
 	Alignment(databody avg_acc, databody avg_gyro, double fi);
 	
-	void startAlignment(double* q0, double* q1, double* q2, double* q3);
+	void startAlignment(Quat* quat);
 
 	orientationangles getAlignmentError(databody deltaa, databody deltaomega);
 
 	orientationangles getAngles();
-	matrix getMatrix();
+	matrix<double> getMatrix();
 };
 

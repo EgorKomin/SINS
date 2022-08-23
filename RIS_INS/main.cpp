@@ -3,7 +3,6 @@
 #include"SINS_algorithm.h"
 #include<fstream>
 #include<ctime>
-#include"ErrorModel.h"
 #include"Alignment.h"
 #include"Noise.h"
 
@@ -114,10 +113,9 @@ int main()
 	double C[3][3];
 	double fi, lmd, Ve, Vn, Vup, Up;
 
-	double q0 = 1;
-	double q1 = 0;
-	double q2 = 0;
-	double q3 = 0;
+	Quat quat = { 0 };
+	quat.q0 = 1;
+
 	
 	auto str = consts::getconsts();
 	auto dt = 1 / str.f;
@@ -223,7 +221,7 @@ int main()
 	double deltaCorr = 0;
 	double Ts = 0;
 	bool err = false;
-	bool apply_second_platform = false;
+	bool layout_base_platform = false;
 	double sigmaSNS = 0;
 
 	if (typeCorr != WITHOUTCORR)
@@ -243,16 +241,10 @@ int main()
 		std::cout << "ââåäèòå ÑÊÎ êîððåêòîðà â ì(ì/ñ)" << std::endl;
 		std::cin >> sigmaSNS;
 
-		std::cout << "ïîäêëþ÷àòü ëè âòîðóþ ïëàòôîðìó? Äà-1/Íåò-0" << std::endl;
-		std::cin >> apply_second_platform;
+		std::cout << "âûâîäèòü ëè â òå÷åíèå ïåðåõîäíîãî ïðîöåññà âû÷èñëåíèÿ ïî áàçîâîé ïëàòôîðìå? Äà-1/Íåò-0" << std::endl;
+		std::cin >> layout_base_platform;
 		std::cout << "=========================================" << std::endl;
 		
-	}
-	else
-	{
-		std::cout << "ïîäêëþ÷àòü ëè ìîäåëü îøèáîê(òîëüêî áåç êîððåêöèè)? Äà-1/Íåò-0" << std::endl;
-		std::cin >> err;
-		std::cout << "=========================================" << std::endl;
 	}
 	
 	// ÔÎÐÌÈÐÎÂÀÍÈÅ ÝÒÀËÎÍÀ È ÎØÈÁÎÊ ÑÍÑ Â ÇÀÂÈÑÈÌÎÑÒÈ ÎÒ ÒÈÏÀ ÊÎÐÐÅÊÖÈÈ
@@ -385,7 +377,7 @@ int main()
 	// ÂÛÑÒÀÂÊÀ
 	Alignment align(avg_acc, avg_gyro, fi);
 	// îïðåäåëåíèå íà÷àëüíîãî êâàòåðíèîíà
-	align.startAlignment(&q0, &q1, &q2, &q3);
+	align.startAlignment(&quat);
 
 	// ïîëó÷åíèå íà÷àëüíûõ óãëîâ îðèåíòàöèè
 	auto angles = align.getAngles();
@@ -424,73 +416,45 @@ int main()
 	}
 		
 	// ÇÀÏÈÑÜ ÊÎÍÔÈÃÓÐÀÖÈÈ
-	std::cout << "creating output file <config>" << std::endl;
+	std::cout << "creating configuration file" << std::endl;
 	std::ofstream file_cfg;
 	file_cfg.open("config.txt");
 	file_cfg <<
 		(tcorr + 4 * Ts) / dt << "\n" <<	// Òàêò êîíöà ïåðåõîäíîãî ïðîöåññà
-		err << "\n" <<						// Ôëàã ïðèìåíåíèÿ ìîäåëè îøèáîê
 		calculateSKO << std::endl;			// Ôëàã âû÷èñëåíèÿ ÑÊÎ
 
 	file_cfg.close();
 
 
 	//èíèöèàëèçàöèÿ íàâèãàöèîííîãî àëãîðèòìà
-	SINS_algorithm alg(q0, q1, q2, q3, typeCorr, tcorr, Ts, apply_second_platform);
+	SINS_algorithm alg(quat, typeCorr, tcorr, Ts, layout_base_platform);
 
 	//ââîä íà÷àëüíûõ óñëîâèé
 	alg.setInit(Ve, Vn, Vup, fi, lmd, Up);
 
-	std::cout << "working navigation algrorithm" << std::endl;
-	auto SOLVEC = alg.start(acc, gyro, dataCorr_E_lmd, dataCorr_N_fi);
-	
-
-	// ÇÀÏÈÑÜ ÐÅÇÓËÜÒÀÒÎÂ ÌÎÄÅËÈÐÎÂÀÍÈß Â ÔÀÉË
-	std::cout << "creating output file <solution>" << std::endl;
+	// ÐÀÁÎÒÀ ÍÀÂ ÀËÃÎÐÈÒÌÀ È ÇÀÏÈÑÜ ÐÅÇÓËÜÒÀÒÎÂ ÌÎÄÅËÈÐÎÂÀÍÈß Â ÔÀÉË
+	std::cout << "working navigation algorithm" << std::endl;
 	std::ofstream file_sol;
 	file_sol.open("solution.txt");
 
-	for (size_t i = 0; i < SOLVEC.size(); ++i)
+	for (size_t i = 0; i < acc.size(); ++i)
 	{
+		alg.navigationPass(acc[i], gyro[i], dataCorr_E_lmd[i], dataCorr_N_fi[i]);
+		SINS_SOLUTION SOL = alg.getSolution();
 		file_sol <<
-			SOLVEC[i].angles.pitch - pitchetalon << "\t" <<
-			SOLVEC[i].angles.roll - rolletalon << "\t" <<
-			SOLVEC[i].angles.heading - headingetalon << "\t" <<
-			SOLVEC[i].Ve << "\t" <<
-			SOLVEC[i].Vn << "\t" <<
-			SOLVEC[i].Vup << "\t" <<
-			SOLVEC[i].E << "\t" <<
-			SOLVEC[i].N << "\t" <<
-			SOLVEC[i].Up << "\t" <<
+			SOL.angles.pitch - pitchetalon << "\t" <<
+			SOL.angles.roll - rolletalon << "\t" <<
+			SOL.angles.heading - headingetalon << "\t" <<
+			SOL.Ve << "\t" <<
+			SOL.Vn << "\t" <<
+			SOL.Vup << "\t" <<
+			SOL.E << "\t" <<
+			SOL.N << "\t" <<
+			SOL.Up << "\t" <<
 			t[i] << std::endl;
 	}
+	
 	file_sol.close();
-
-	if (err)
-	{
-		//ìîäåëü îøèáîê
-		ErrorModel erralg;
-		std::cout << "working error model" << std::endl;
-		auto ERRVEC = erralg.geterror(acc, SOLVEC, deltaAngles.pitch, deltaAngles.roll, deltaAngles.heading, deltaa, deltaomega);
-
-		std::cout << "creating output file <error>" << std::endl;
-		std::ofstream file_err;
-		file_err.open("error.txt");
-		for (size_t i = 0; i < ERRVEC.size(); ++i)
-		{
-			file_err <<
-				ERRVEC[i].deltapitch << "\t" << 
-				ERRVEC[i].deltaroll << "\t" << 
-				ERRVEC[i].deltaheading << "\t" << 
-				ERRVEC[i].deltaVe << "\t" << 
-				ERRVEC[i].deltaVn << "\t" << 
-				ERRVEC[i].deltaVup << "\t" << 
-				ERRVEC[i].deltaE << "\t" << 
-				ERRVEC[i].deltaN << "\t" << 
-				ERRVEC[i].deltaUp << "\t" << std::endl;
-		}
-		file_err.close();
-
-	}
+	
 	return 0;
 }

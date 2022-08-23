@@ -4,15 +4,15 @@
 
 Alignment::Alignment(databody avg_acc, databody avg_gyro, double fi)
 {
+	orientation = { 0 };
 	this->avg_acc = avg_acc;
 	this->avg_gyro = avg_gyro;
 	this->fi = fi;
-	C = { 0 };
-	orientation = { 0 };
+	C.resize(3, 3);
 	align_completed = false;
 }
 
-void Alignment::startAlignment(double *q0, double *q1, double *q2, double *q3)
+void Alignment::startAlignment(Quat *quat)
 {
 	// разомкнутая выставка
 	auto str = consts::getconsts();
@@ -41,29 +41,29 @@ void Alignment::startAlignment(double *q0, double *q1, double *q2, double *q3)
 	q3_test = cos(heading / 2) * sin(pitch / 2) * sin(roll / 2) - sin(heading / 2) * cos(pitch / 2) * cos(roll / 2);*/
 
 	//матрица перехода из body в опорную ск
-	C.c00 = cos(roll) * cos(heading) + sin(pitch) * sin(roll) * sin(heading);
-	C.c01 = cos(pitch) * sin(heading);
-	C.c02 = sin(roll) * cos(heading) - sin(pitch) * cos(roll) * sin(heading);
-	C.c10 = -cos(roll) * sin(heading) + sin(pitch) * sin(roll) * cos(heading);
-	C.c11 = cos(pitch) * cos(heading);
-	C.c12 = -sin(roll) * sin(heading) - sin(pitch) * cos(roll) * cos(heading);
-	C.c20 = -cos(pitch) * sin(roll);
-	C.c21 = sin(pitch);
-	C.c22 = cos(pitch) * cos(roll);
+	C(0, 0) = cos(roll) * cos(heading) + sin(pitch) * sin(roll) * sin(heading);
+	C(0, 1) = cos(pitch) * sin(heading);
+	C(0, 2) = sin(roll) * cos(heading) - sin(pitch) * cos(roll) * sin(heading);
+	C(1, 0) = -cos(roll) * sin(heading) + sin(pitch) * sin(roll) * cos(heading);
+	C(1, 1) = cos(pitch) * cos(heading);
+	C(1, 2) = -sin(roll) * sin(heading) - sin(pitch) * cos(roll) * cos(heading);
+	C(2, 0) = -cos(pitch) * sin(roll);
+	C(2, 1) = sin(pitch);
+	C(2, 2) = cos(pitch) * cos(roll);
 
-	*q0 = sqrt(C.c00 + C.c11 + C.c22 + 1) / 2;
+	quat->q0 = sqrt(C(0, 0) + C(1, 1) + C(2, 2) + 1) / 2;
 
-	if (*q0 == 0)
+	if (quat->q0 == 0)
 	{
-		*q1 = sqrt((C.c00 + 1) / 2);
-		*q2 = sqrt((C.c11 + 1) / 2);
-		*q3 = sqrt((C.c22 + 1) / 2);
+		quat->q1 = sqrt((C(0, 0) + 1) / 2);
+		quat->q2 = sqrt((C(1, 1) + 1) / 2);
+		quat->q3 = sqrt((C(2, 2) + 1) / 2);
 	}
 	else
 	{
-		*q1 = -(C.c12 - C.c21) / 4 / *q0;
-		*q2 = -(C.c20 - C.c02) / 4 / *q0;
-		*q3 = -(C.c01 - C.c10) / 4 / *q0;
+		quat->q1 = -(C(1, 2) - C(2, 1)) / 4 / quat->q0;
+		quat->q2 = -(C(2, 0) - C(0, 2)) / 4 / quat->q0;
+		quat->q3 = -(C(0, 1) - C(1, 0)) / 4 / quat->q0;
 	}
 
 	//test
@@ -72,7 +72,7 @@ void Alignment::startAlignment(double *q0, double *q1, double *q2, double *q3)
 	//std::cout << *q2 - q2_test << std::endl;
 	//std::cout << *q3 - q3_test << std::endl;
 
-	consts::norm(q0, q1, q2, q3);
+	consts::norm(quat);
 
 	orientation.heading = heading;
 	orientation.pitch = pitch;
@@ -112,7 +112,7 @@ orientationangles Alignment::getAngles()
 	return orientation;
 }
 
-matrix Alignment::getMatrix()
+matrix<double> Alignment::getMatrix()
 {
 	align_check();
 	return C;
